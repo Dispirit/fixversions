@@ -22,8 +22,8 @@ parser.add_argument("-d", type=str, help="description")
 parser.add_argument("-bid", type=str, help="build id")
 parser.add_argument("-ju", type=str, help="Jira REST API URL")
 parser.add_argument("-tu", type=str, help="TeamCity REST API URL")
-parser.add_argument("-r", type=bool, help="released version")
-parser.add_argument("-m", type=bool, help="move new version after previous")
+parser.add_argument("-r", type=int, help="released version")
+parser.add_argument("-m", type=int, help="move new version after previous")
 args = parser.parse_args()
 
 
@@ -209,9 +209,9 @@ class Create:
             "project": self.project
         }
         create = self.jira.post(rest_api_prefix, payload)
-        new_version_id = create.json()['id']
 
         if create.status_code == 201:
+            new_version_id = create.json()['id']
             print(f"Version {self.name} with id {new_version_id} was created in {self.project}")
             return new_version_id
         else:
@@ -374,8 +374,14 @@ def main():
     version_prefix = args.vp
     version = args.v
     description = args.d
-    released = args.r
-    move = args.m
+    if args.r == 1:
+        released = True
+    elif args.r == 0:
+        released = False
+    if args.m == 1:
+        move = True
+    elif args.m == 0:
+        move = False
 
 
     # -------------- Авторизация в Jira и методы get, post, put -------------- #
@@ -405,9 +411,10 @@ def main():
     if args.update:
         # -------------- Получить список тасок и установить ФиксВерсии -------------- #
         get_issues = team.get_spaces_list()
-        for issue in get_issues:
-            get_fix_version = Issue(issue, version_prefix, version, jira)
-            get_fix_version.get_issue()
+        if get_issues:
+            for issue in get_issues:
+                get_fix_version = Issue(issue, version_prefix, version, jira)
+                get_fix_version.get_issue()
 
 
 if __name__ == '__main__':
