@@ -89,6 +89,7 @@ class ReadSpaceList:
 
     def info(self):
         print(f"Spaces in file:\n{self.get_list_spaces()}")
+        print(f"Number of spaces: {len(self.get_list_spaces())}")
 
 
 class AddSpaceList(ReadSpaceList):
@@ -362,6 +363,13 @@ class Issue:
                     print(f"| fixVersion/s {version} added successfully in task {issue}")
 
 
+def bool_args(input_val) -> bool:
+    if input_val == 0:
+        return False
+    elif input_val == 1:
+        return True
+
+
 def main():
     # -------------- Переменные полученные из аргументов -------------- #
     path = args.sf
@@ -374,14 +382,8 @@ def main():
     version_prefix = args.vp
     version = args.v
     description = args.d
-    if args.r == 1:
-        released = True
-    elif args.r == 0:
-        released = False
-    if args.m == 1:
-        move = True
-    elif args.m == 0:
-        move = False
+    released = bool_args(args.r)
+    move = bool_args(args.m)
 
 
     # -------------- Авторизация в Jira и методы get, post, put -------------- #
