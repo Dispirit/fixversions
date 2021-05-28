@@ -27,6 +27,77 @@ parser.add_argument("-m", type=int, help="move new version after previous")
 args = parser.parse_args()
 
 
+class WriteErrors:
+    def __init__(self, error_text: str, *other) -> None:
+        self.error_text = error_text
+        self.other = other
+
+    def write_to_file(self) -> None:
+        error_file = r"fv_errors.txt"
+        other = " ".join(self.other)
+        text = f"{self.error_text} {other}"
+        with open(error_file, 'a') as space_file:
+            space_file.write(text + "\n")
+
+
+class CheckErrors:
+    def __init__(self, error_code: int, query: str) -> None:
+        self.error_code = error_code
+        self.query = query
+
+    def get_status(self) -> str:
+        errors_code_dict = {
+            "get_project_versions": {
+                200: "The project exists and the user has permission to view its versions.",
+                404: "The project is not found, or the calling user does not have permission to view it."
+            },
+            "get_version": {
+                200: "The version exists and the currently authenticated user has permission to view it.",
+                404: "The version does not exist or the currently authenticated user does not have permission to view "
+                     "it. "
+            },
+            "create_version": {
+                201: "The version is created successfully.",
+                403: "The currently authenticated user does not have permission to edit the version.",
+                404: "The version does not exist or the currently authenticated user does not have permission to view "
+                     "it. "
+            },
+            "update_version": {
+                200: "The version is updated successfully.",
+                403: "The currently authenticated user does not have permission to edit the version.",
+                404: "The version does not exist or the currently authenticated user does not have permission to view "
+                     "it. "
+            },
+            "move_version": {
+                200: "The version is moved successfully.",
+                404: "The version, or target of the version to move after does not exist or the currently "
+                     "authenticated "
+                     "user does not have permission to view it."
+            },
+            "get_issue": {
+                200: "Returns a full representation of a JIRA issue.",
+                404: "The requested issue is not found, or the user does not have permission to view it."
+            },
+            "edit_issue": {
+                204: "Updated the issue successfully.",
+                400: "The requested issue update failed. Check version in space.",
+                403: "The user doesn't have permissions to disable users notification."
+            },
+            "auth_jira": {
+                200: "Authentication successfully",
+                401: "The current user is not authenticated.",
+                404: "The requested user is not found."
+            },
+            "auth_teamcity": {
+                200: "Authentication successfully",
+                401: "The current user is not authenticated.",
+                404: "The requested URL is not found."
+            }
+        }
+        dict_lists = (errors_code_dict.get(self.query).get(self.error_code))
+        return dict_lists
+
+
 class TeamCityListSpaces:
     def __init__(self, bearer_token: str, rest_api_url: str, build_id: str) -> None:
         self.bearer_token = bearer_token
@@ -39,9 +110,13 @@ class TeamCityListSpaces:
             response = session.get(url_path, headers=head, verify=False, timeout=600)
             response.encoding = 'utf-8'
             if response.status_code == 200:
+                print("Connection to Jira successfully")
                 return response.text
             else:
-                print(f"Some connection problems was occurred. Returned status code is: {response.status_code}")
+                error_text = CheckErrors(response.status_code, "auth_teamcity").get_status()
+                WriteErrors(f"Error: {error_text}", "TeamCity Connection Error",
+                            f"With code: {response.status_code}").write_to_file()
+                print(f"{error_text} Returned status code is: {response.status_code}")
                 exit()
 
     def get_overview_id(self) -> list:
@@ -87,7 +162,7 @@ class ReadSpaceList:
         spaces_list = [space for space in data.split(",")]
         return spaces_list
 
-    def info(self):
+    def info(self) -> None:
         print(f"Spaces in file:\n{self.get_list_spaces()}")
         print(f"Number of spaces: {len(self.get_list_spaces())}")
 
@@ -135,10 +210,21 @@ class JiraAuth:
 
 
 class Jira(JiraAuth):
-    def __init__(self, jira_url: str, *arguments, **kwargs) -> None:
-        super().__init__(*arguments, **kwargs)
+    def __init__(self, jira_url: str, *arguments) -> None:
+        super().__init__(*arguments)
+        user = arguments[0]
         self.jira_url = jira_url
         self.session = self.auth()
+        login_url = self.jira_url + f"/user?username={user}"
+        auth_code = self.session.get(login_url, verify=False, timeout=600)
+        if auth_code.status_code == 200:
+            print("Connection to Jira successfully")
+        else:
+            error_text = CheckErrors(auth_code.status_code, "auth_jira").get_status()
+            WriteErrors(f"Error: {error_text}", "Jira Connection Error",
+                        f"With code: {auth_code.status_code}").write_to_file()
+            print(f"{error_text} Returned status code is: {auth_code.status_code}")
+            exit()
 
     def get(self, jira_url_prefix) -> requests.models.Response:
         full_url = self.jira_url + jira_url_prefix
@@ -185,7 +271,7 @@ class Create:
                 if previous_version in i['name']:
                     id_previous_version = i['id']
                 if self.name in i['name']:
-                    print(f"This version {self.name} exists in {self.project}")
+                    print(f"| This version {self.name} exists in {self.project}")
                     need_create = False
                     break
                 else:
@@ -196,11 +282,16 @@ class Create:
                 if self.move:
                     self.move_versions(new_ver_id, prev_ver_id, previous_version)
         else:
-            print(f"Some problem occurred with space: {self.project}")
+            error_text = CheckErrors(jira_get.status_code, "get_project_versions").get_status()
+            WriteErrors(f"Error: {error_text}", f"In def: Check Version", f"In space: {self.project}").write_to_file()
+            print(f"| ------------------------------------------------------------\n"
+                  f"| In space {self.project} there was a problem\n"
+                  f"| {error_text}")
 
     def create_version(self) -> int:
         rest_api_prefix = f"/version"
-        print(f"Creating version {self.name} in {self.project}")
+        print(f"| ------------------------------------------------------------\n"
+              f"| Creating version {self.name} in {self.project}")
         payload = {
             "description": self.description,
             "name": self.name,
@@ -213,10 +304,13 @@ class Create:
 
         if create.status_code == 201:
             new_version_id = create.json()['id']
-            print(f"Version {self.name} with id {new_version_id} was created in {self.project}")
+            print(f"| Version {self.name} with id {new_version_id} was created in {self.project}")
             return new_version_id
         else:
-            print(f"Returned code is {create.status_code}")
+            error_text = CheckErrors(create.status_code, "create_version").get_status()
+            WriteErrors(f"Error: {error_text}", f"In def: Create Version", f"Version: {self.name}",
+                        f"In space: {self.project}").write_to_file()
+            print(f"| {error_text}")
 
     def release_previous_task(self, prev_ver_id) -> int:
         rest_api_prefix = f"/version/{prev_ver_id}"
@@ -229,10 +323,13 @@ class Create:
             update = self.jira.put(rest_api_prefix, payload)
             update_name = update.json()['name']
             if update.status_code == 200:
-                print(f"Version {update_name} with id {prev_ver_id} was released in {self.project}")
+                print(f"| Version {update_name} with id {prev_ver_id} was released in {self.project}")
                 return prev_ver_id
             else:
-                print(f"Returned code is {update.status_code}")
+                error_text = CheckErrors(update.status_code, "update_version").get_status()
+                WriteErrors(f"Error: {error_text}", f"In def: Release Version", f"Version: {update_name}",
+                            f"In space: {self.project}").write_to_file()
+                print(f"| {error_text}")
 
     def move_versions(self, new_ver, prev_ver, prev_ver_name) -> None:
         rest_api_prefix = f"/version/{new_ver}/move"
@@ -242,9 +339,12 @@ class Create:
             }
             move = self.jira.post(rest_api_prefix, payload)
             if move.status_code == 200:
-                print(f"Version {self.name} with id {new_ver}) moved after {prev_ver_name} with id: {prev_ver}")
+                print(f"| Version {self.name} with id {new_ver}) moved after {prev_ver_name} with id: {prev_ver}")
             else:
-                print(f"Returned code is {move.status_code}")
+                error_text = CheckErrors(move.status_code, "move_version").get_status()
+                WriteErrors(f"Error: {error_text}", f"In def: Move Version", f"Version: {self.name}",
+                            f"In space: {self.project}").write_to_file()
+                print(f"| {error_text}")
 
 
 def parse_version(version: str, regexp: str) -> re.Match.group:
@@ -296,6 +396,11 @@ class Issue:
                     print(f"| ------------------------------------------------------------\n"
                           f"| FixVersion/s {fv_list} found in task: {self.issue_key}")
             self.search_story(jira_get_json, fv_list)
+        else:
+            error_text = CheckErrors(jira_get.status_code, "get_issue").get_status()
+            WriteErrors(f"Error: {error_text}", f"In def: Get Issue", f"Version: {self.name}",
+                        f"IN issue: {self.issue_key}").write_to_file()
+            print(f"{error_text}")
 
     def search_story(self, jira_get_json, fv_list) -> None:
         jira_get_json_parent = ""
@@ -326,19 +431,23 @@ class Issue:
                     print(f"| Add {version} into {fv_list}")
                     fv_list.append(version)
                     for list_version in fv_list:
-                        version_prefix = re.search(r'(\w+.*)_', list_version).group(1)
-                        if self.version_prefix == version_prefix:
-                            parse_list_version = parse_version(list_version, regexp)
-                            split_list_version = str(parse_list_version).split('.')
-                            if len(split_insert_version) == 2:
-                                if split_insert_version[0] == split_list_version[0]:
-                                    change_fv, fv_list = checking_version(parse_insert_version, parse_list_version,
-                                                                          fv_list, list_version, version)
-                            elif len(split_insert_version) == 3:
-                                if split_insert_version[0] == split_list_version[0] \
-                                        and split_insert_version[1] == split_list_version[1]:
-                                    change_fv, fv_list = checking_version(parse_insert_version, parse_list_version,
-                                                                          fv_list, list_version, version)
+                        rm_search = re.search(r'(\w+.*)-\d+', list_version)
+                        if rm_search:
+                            print(f"| {list_version} version was found")
+                        else:
+                            version_prefix = re.search(r'(\w+.*)_', list_version).group(1)
+                            if self.version_prefix == version_prefix:
+                                parse_list_version = parse_version(list_version, regexp)
+                                split_list_version = str(parse_list_version).split('.')
+                                if len(split_insert_version) == 2:
+                                    if split_insert_version[0] == split_list_version[0]:
+                                        change_fv, fv_list = checking_version(parse_insert_version, parse_list_version,
+                                                                              fv_list, list_version, version)
+                                elif len(split_insert_version) == 3:
+                                    if split_insert_version[0] == split_list_version[0] \
+                                            and split_insert_version[1] == split_list_version[1]:
+                                        change_fv, fv_list = checking_version(parse_insert_version, parse_list_version,
+                                                                              fv_list, list_version, version)
                 else:
                     print(f"| fixVersion {version} exists in {fv_list}")
                 if change_fv:
@@ -352,8 +461,13 @@ class Issue:
                     fv_put = self.jira.put(rest_api_prefix, payload)
                     if fv_put.status_code == 204:
                         print(f"| fixVersion/s {version} added successfully in task {fv_list}")
+                    else:
+                        error_text = CheckErrors(fv_put.status_code, "edit_issue").get_status()
+                        WriteErrors(f"Error: {error_text}", f"In def: Set fixVersion/s", f"Version: {version}",
+                                    f"IN issue: {issues}").write_to_file()
+                        print(f"{error_text}")
             else:
-                print(f"| No fixVersion/s in task {issue}\nTrying to add fixVersion/s {version}")
+                print(f"| No fixVersion/s in task {issue}\n| Trying to add fixVersion/s {version}")
                 payload = {
                     "update": {
                         "fixVersions": [{"set": [{"name": version}]}]}
@@ -361,6 +475,11 @@ class Issue:
                 fv_put = self.jira.put(rest_api_prefix, payload)
                 if fv_put.status_code == 204:
                     print(f"| fixVersion/s {version} added successfully in task {issue}")
+                else:
+                    error_text = CheckErrors(fv_put.status_code, "edit_issue").get_status()
+                    WriteErrors(f"Error: {error_text}", f"In def: Set fixVersion/s", f"Version: {version}",
+                                f"IN issue: {issues}").write_to_file()
+                    print(f"{error_text}")
 
 
 def bool_args(input_val) -> bool:
@@ -386,9 +505,6 @@ def main():
     move = bool_args(args.m)
 
 
-    # -------------- Авторизация в Jira и методы get, post, put -------------- #
-    jira = Jira(jira_url, jira_user, jira_pass)
-
     # -------------- Получеие списка задач и пространств из TeamCity -------------- #
     team = TeamCityListSpaces(bearer_token, rest_api_url, build_id)
 
@@ -397,6 +513,9 @@ def main():
         # -------------- Получить список задач из TeamCity и добавить пространства в файл  -------------- #
         add_new_space = AddSpaceList(path, team.get_spaces_list())
         add_new_space.add_space_into_file()
+
+    # -------------- Авторизация в Jira и методы get, post, put -------------- #
+    jira = Jira(jira_url, jira_user, jira_pass)
 
     # -------------- Проверка на существование и создание новой версии -------------- #
     if args.create:
