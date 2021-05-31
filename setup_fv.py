@@ -110,7 +110,6 @@ class TeamCityListSpaces:
             response = session.get(url_path, headers=head, verify=False, timeout=600)
             response.encoding = 'utf-8'
             if response.status_code == 200:
-                print("Connection to Jira successfully")
                 return response.text
             else:
                 error_text = CheckErrors(response.status_code, "auth_teamcity").get_status()
@@ -150,6 +149,9 @@ class TeamCityListSpaces:
             unique_list.sort()
             print(f"Task/s found: {unique_list}")
             return unique_list
+        else:
+            print(f"No task/s found")
+            exit()
 
 
 class ReadSpaceList:
@@ -218,7 +220,7 @@ class Jira(JiraAuth):
         login_url = self.jira_url + f"/user?username={user}"
         auth_code = self.session.get(login_url, verify=False, timeout=600)
         if auth_code.status_code == 200:
-            print("Connection to Jira successfully")
+            pass
         else:
             error_text = CheckErrors(auth_code.status_code, "auth_jira").get_status()
             WriteErrors(f"Error: {error_text}", "Jira Connection Error",
@@ -271,7 +273,8 @@ class Create:
                 if previous_version in i['name']:
                     id_previous_version = i['id']
                 if self.name in i['name']:
-                    print(f"| This version {self.name} exists in {self.project}")
+                    print(f"| ------------------------------------------------------------\n"
+                          f"| This version {self.name} exists in {self.project}")
                     need_create = False
                     break
                 else:
@@ -510,15 +513,17 @@ def main():
 
     # -------------- Аргумент для пространств -------------- #
     if args.create_space:
+        # -------------- Получеие списка задач и пространств из TeamCity -------------- #
+        team = TeamCityListSpaces(bearer_token, rest_api_url, build_id)
+
         # -------------- Получить список задач из TeamCity и добавить пространства в файл  -------------- #
         add_new_space = AddSpaceList(path, team.get_spaces_list())
         add_new_space.add_space_into_file()
 
-    # -------------- Авторизация в Jira и методы get, post, put -------------- #
-    jira = Jira(jira_url, jira_user, jira_pass)
-
     # -------------- Проверка на существование и создание новой версии -------------- #
     if args.create:
+        # -------------- Авторизация в Jira и методы get, post, put -------------- #
+        jira = Jira(jira_url, jira_user, jira_pass)
         # -------------- Получить список пространств из файла -------------- #
         spaces = ReadSpaceList(path)
         projects = spaces.get_list_spaces()
@@ -530,12 +535,17 @@ def main():
 
     # -------------- Проставление ФиксВерсий в тасках Jira -------------- #
     if args.update:
+        # -------------- Получеие списка задач и пространств из TeamCity -------------- #
+        team = TeamCityListSpaces(bearer_token, rest_api_url, build_id)
+
+        # -------------- Авторизация в Jira и методы get, post, put -------------- #
+        jira = Jira(jira_url, jira_user, jira_pass)
+
         # -------------- Получить список тасок и установить ФиксВерсии -------------- #
         get_issues = team.get_spaces_list()
-        if get_issues:
-            for issue in get_issues:
-                get_fix_version = Issue(issue, version_prefix, version, jira)
-                get_fix_version.get_issue()
+        for issue in get_issues:
+            get_fix_version = Issue(issue, version_prefix, version, jira)
+            get_fix_version.get_issue()
 
 
 if __name__ == '__main__':
