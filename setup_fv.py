@@ -155,8 +155,9 @@ class TeamCityListSpaces:
 
 
 class ReadSpaceList:
-    def __init__(self, file_path: str) -> None:
+    def __init__(self, file_path: str, exclude_file: str) -> None:
         self.path = file_path
+        self.exclude_path = exclude_file
 
     def get_list_spaces(self) -> list:
         with open(self.path, 'r') as spaces_file:
@@ -164,17 +165,25 @@ class ReadSpaceList:
         spaces_list = [space for space in data.split(",")]
         return spaces_list
 
+    def get_exclude_list_spaces(self) -> list:
+        with open(self.exclude_path, 'r') as exclude_file:
+            data = exclude_file.read()
+        exclude_list = [space for space in data.split(",")]
+        return exclude_list
+
     def info(self) -> None:
         print(f"Spaces in file:\n{self.get_list_spaces()}")
         print(f"Number of spaces: {len(self.get_list_spaces())}")
+        print(f"Excluded spaces: {self.get_exclude_list_spaces()}")
 
 
 class AddSpaceList(ReadSpaceList):
-    def __init__(self, file_path, new_space: list) -> None:
-        super().__init__(file_path)
+    def __init__(self, file_path, new_space: list, exclude_file) -> None:
+        super().__init__(file_path, exclude_file)
         self.new_spaces = new_space
         self.spaces = self.get_list_spaces()
         self.space_new_list_d = []
+        self.exclude_space = self.get_exclude_list_spaces()
 
     def add_space_into_file(self) -> None:
         if self.spaces[0] == '':
@@ -184,9 +193,11 @@ class AddSpaceList(ReadSpaceList):
         if self.new_spaces:
             for new_space in self.new_spaces:
                 parse_spaces = re.search(r'(\w+)', new_space)
-                space_new_list.append(parse_spaces.group(0))
-                self.space_new_list_d = list(dict.fromkeys(space_new_list))
-                self.space_new_list_d.sort()
+                space_name = parse_spaces.group(0)
+                if space_name not in self.exclude_space:
+                    space_new_list.append(space_name)
+                    self.space_new_list_d = list(dict.fromkeys(space_new_list))
+                    self.space_new_list_d.sort()
             convert_spaces = ','.join(self.space_new_list_d)
 
             with open(self.path, 'w') as space_file:
@@ -463,7 +474,8 @@ class Issue:
                     }
                     fv_put = self.jira.put(rest_api_prefix, payload)
                     if fv_put.status_code == 204:
-                        print(f"| fixVersion/s {version} added successfully in task {fv_list}")
+                        print(f"| fixVersion/s {version} added successfully in task {fv_list}\n"
+                              f"| ------------------------------------------------------------")
                     else:
                         error_text = CheckErrors(fv_put.status_code, "edit_issue").get_status()
                         WriteErrors(f"Error: {error_text}", f"In def: Set fixVersion/s", f"Version: {version}",
@@ -477,7 +489,8 @@ class Issue:
                 }
                 fv_put = self.jira.put(rest_api_prefix, payload)
                 if fv_put.status_code == 204:
-                    print(f"| fixVersion/s {version} added successfully in task {issue}")
+                    print(f"| fixVersion/s {version} added successfully in task {issue}\n"
+                          f"| ------------------------------------------------------------")
                 else:
                     error_text = CheckErrors(fv_put.status_code, "edit_issue").get_status()
                     WriteErrors(f"Error: {error_text}", f"In def: Set fixVersion/s", f"Version: {version}",
@@ -495,6 +508,7 @@ def bool_args(input_val) -> bool:
 def main():
     # -------------- Переменные полученные из аргументов -------------- #
     path = args.sf
+    exclude_path = r"exclude_spaces.txt"
     jira_url = args.ju
     jira_user = args.us
     jira_pass = args.p
@@ -517,7 +531,7 @@ def main():
         team = TeamCityListSpaces(bearer_token, rest_api_url, build_id)
 
         # -------------- Получить список задач из TeamCity и добавить пространства в файл  -------------- #
-        add_new_space = AddSpaceList(path, team.get_spaces_list())
+        add_new_space = AddSpaceList(path, team.get_spaces_list(), exclude_path)
         add_new_space.add_space_into_file()
 
     # -------------- Проверка на существование и создание новой версии -------------- #
@@ -525,7 +539,7 @@ def main():
         # -------------- Авторизация в Jira и методы get, post, put -------------- #
         jira = Jira(jira_url, jira_user, jira_pass)
         # -------------- Получить список пространств из файла -------------- #
-        spaces = ReadSpaceList(path)
+        spaces = ReadSpaceList(path, exclude_path)
         projects = spaces.get_list_spaces()
         spaces.info()
         for project in projects:
