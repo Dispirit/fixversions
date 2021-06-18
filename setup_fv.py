@@ -1,4 +1,5 @@
 import requests
+from requests.auth import AuthBase
 import re
 from datetime import date
 import argparse
@@ -98,36 +99,45 @@ class CheckErrors:
         return dict_lists
 
 
+class TokenAuth(AuthBase):
+    def __init__(self, token) -> None:
+        self.token = token
+
+    def __call__(self, r) -> requests.models.PreparedRequest:
+        r.headers['Bearer'] = f'{self.token}'
+        return r
+
+
 class TeamCityListSpaces:
     def __init__(self, bearer_token: str, rest_api_url: str, build_id: str) -> None:
         self.bearer_token = bearer_token
         self.rest_api_url = rest_api_url
         self.build_id = build_id
+        self.head = {'Authorization': 'Bearer ' + self.bearer_token}
 
-    def auth(self, url_path: str) -> str:
-        head = {'Authorization': 'Bearer ' + self.bearer_token}
+    def auth(self) -> requests.sessions.Session:
         with requests.Session() as session:
-            response = session.get(url_path, headers=head, verify=False, timeout=600)
-            response.encoding = 'utf-8'
-            if response.status_code == 200:
-                return response.text
-            else:
-                error_text = CheckErrors(response.status_code, "auth_teamcity").get_status()
-                WriteErrors(f"Error: {error_text}", "TeamCity Connection Error",
-                            f"With code: {response.status_code}").write_to_file()
-                print(f"{error_text} Returned status code is: {response.status_code}")
-                exit()
+            session.auth = TokenAuth(self.bearer_token)
+            return session
 
     def get_overview_id(self) -> list:
         url_path = f"{self.rest_api_url}?locator=build:(id:{self.build_id})"
-        build_ids = self.auth(url_path)
-        parse_input = re.findall(r'id="(\d+)"', build_ids)
-        if parse_input:
-            print(f"Id's found: {parse_input}")
-            return parse_input
+        build_ids = self.auth().get(url_path, headers=self.head, verify=False, timeout=600)
+        if build_ids.status_code == 200:
+            print("Connection to TeamCity successfully")
+            parse_input = re.findall(r'id="(\d+)"', build_ids.text)
+            if parse_input:
+                print(f"Id's found: {parse_input}")
+                return parse_input
+            else:
+                print("No one id's found")
+                return []
         else:
-            print("No one id's found")
-            return []
+            error_text = CheckErrors(build_ids.status_code, "auth_teamcity").get_status()
+            WriteErrors(f"Error: {error_text}", "TeamCity Connection Error",
+                        f"With code: {build_ids.status_code}").write_to_file()
+            print(f"{error_text} Returned status code is: {build_ids.status_code}")
+            exit()
 
     def get_spaces_list(self) -> list:
         spaces_list = self.get_overview_id()
@@ -136,15 +146,22 @@ class TeamCityListSpaces:
         if spaces_list_len > 0:
             for space in spaces_list:
                 url_path = f"{self.rest_api_url}/id:{space}"
-                get_spaces_list = self.auth(url_path)
-                parse_input = re.findall(r'\[(\w+-\d+)]', get_spaces_list)
-                if parse_input:
-                    if len(parse_input) > 1:
-                        for add in parse_input:
-                            parse_output.append(add)
-                    else:
-                        list_to_str1 = ''.join(parse_input)
-                        parse_output.append(list_to_str1)
+                get_spaces_list = self.auth().get(url_path, headers=self.head, verify=False, timeout=600)
+                if get_spaces_list.status_code == 200:
+                    parse_input = re.findall(r'\[(\w+-\d+)]', get_spaces_list.text)
+                    if parse_input:
+                        if len(parse_input) > 1:
+                            for add in parse_input:
+                                parse_output.append(add)
+                        else:
+                            list_to_str1 = ''.join(parse_input)
+                            parse_output.append(list_to_str1)
+                else:
+                    error_text = CheckErrors(get_spaces_list.status_code, "auth_teamcity").get_status()
+                    WriteErrors(f"Error: {error_text}", "TeamCity Connection Error",
+                                f"With code: {get_spaces_list.status_code}").write_to_file()
+                    print(f"{error_text} Returned status code is: {get_spaces_list.status_code}")
+                    exit()
             unique_list = list(dict.fromkeys(parse_output))
             unique_list.sort()
             print(f"Task/s found: {unique_list}")
@@ -226,12 +243,13 @@ class Jira(JiraAuth):
     def __init__(self, jira_url: str, *arguments) -> None:
         super().__init__(*arguments)
         user = arguments[0]
+        print(arguments)
         self.jira_url = jira_url
         self.session = self.auth()
-        login_url = self.jira_url + f"/user?username={user}"
+        login_url = str(self.jira_url + f"/user?username={user}")
         auth_code = self.session.get(login_url, verify=False, timeout=600)
         if auth_code.status_code == 200:
-            pass
+            print("Connection to Jira successfully")
         else:
             error_text = CheckErrors(auth_code.status_code, "auth_jira").get_status()
             WriteErrors(f"Error: {error_text}", "Jira Connection Error",
@@ -482,15 +500,15 @@ class Issue:
                                     f"IN issue: {issues}").write_to_file()
                         print(f"{error_text}")
             else:
-                print(f"| No fixVersion/s in task {issue}\n| Trying to add fixVersion/s {version}")
+                print(f"| No fixVersion/s in task {issue}\n| Trying to add fixVersion/s {version}\n"
+                      f"| ------------------------------------------------------------")
                 payload = {
                     "update": {
                         "fixVersions": [{"set": [{"name": version}]}]}
                 }
                 fv_put = self.jira.put(rest_api_prefix, payload)
                 if fv_put.status_code == 204:
-                    print(f"| fixVersion/s {version} added successfully in task {issue}\n"
-                          f"| ------------------------------------------------------------")
+                    print(f"| fixVersion/s {version} added successfully in task {issue}")
                 else:
                     error_text = CheckErrors(fv_put.status_code, "edit_issue").get_status()
                     WriteErrors(f"Error: {error_text}", f"In def: Set fixVersion/s", f"Version: {version}",
@@ -521,9 +539,6 @@ def main():
     released = bool_args(args.r)
     move = bool_args(args.m)
 
-
-    # -------------- Получеие списка задач и пространств из TeamCity -------------- #
-    team = TeamCityListSpaces(bearer_token, rest_api_url, build_id)
 
     # -------------- Аргумент для пространств -------------- #
     if args.create_space:
