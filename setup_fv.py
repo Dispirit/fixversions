@@ -413,7 +413,7 @@ class Issue:
         self.version_prefix = version_prefix
         self.name = self.version_prefix + "_" + self.version
 
-    def get_issue(self) -> None:
+    def get_issue(self) -> tuple:
         rest_api_prefix = f"/issue/{self.issue_key}"
         jira_get = self.jira.get(rest_api_prefix)
         fv_list = []
@@ -427,32 +427,30 @@ class Issue:
                         fv_list.append(fv_name)
                     print(f"| ------------------------------------------------------------\n"
                           f"| FixVersion/s {fv_list} found in task: {self.issue_key}")
-            self.search_story(jira_get_json, fv_list)
+            found_story = self.search_story(jira_get_json)
+            return found_story, fv_list
         else:
             error_text = CheckErrors(jira_get.status_code, "get_issue").get_status()
             WriteErrors(f"Error: {error_text}", f"In def: Get Issue", f"Version: {self.name}",
                         f"IN issue: {self.issue_key}").write_to_file()
             print(f"{error_text}")
 
-    def search_story(self, jira_get_json, fv_list) -> None:
+    def search_story(self, jira_get_json) -> str:
         jira_get_json_parent = ""
         if 'parent' in jira_get_json['fields']:
             jira_get_json_story = jira_get_json['fields']['parent']
             if jira_get_json_story:
                 jira_get_json_parent = jira_get_json_story['key']
                 print(f"| In task {self.issue_key} found parent story {jira_get_json_parent}")
-        self.set_fix_version(jira_get_json_parent, fv_list)
+                return jira_get_json_parent
 
-    def set_fix_version(self, parent_task, fv_list) -> None:
+    def set_fix_version(self, fv_list) -> None:
         version = self.name
         issues = self.issue_key
-        parent = parent_task
         issue_all = [issues]
         regexp = r'(?:\d{1,3}\.)*\d{1,3}'
         payload_body = []
         change_fv = False
-        if parent:
-            issue_all.append(parent)
         for issue in issue_all:
             print(f"| --- Checking fixVersion/s for {issue} ---")
             rest_api_prefix = f"/issue/{issue}"
@@ -482,6 +480,7 @@ class Issue:
                                                                               fv_list, list_version, version)
                 else:
                     print(f"| fixVersion {version} exists in {fv_list}")
+                    change_fv = False
                 if change_fv:
                     unique_list = list(dict.fromkeys(fv_list))
                     for i in unique_list:
@@ -498,7 +497,7 @@ class Issue:
                         error_text = CheckErrors(fv_put.status_code, "edit_issue").get_status()
                         WriteErrors(f"Error: {error_text}", f"In def: Set fixVersion/s", f"Version: {version}",
                                     f"IN issue: {issues}").write_to_file()
-                        print(f"{error_text}")
+                        print(f"| {error_text}")
             else:
                 print(f"| No fixVersion/s in task {issue}\n| Trying to add fixVersion/s {version}\n"
                       f"| ------------------------------------------------------------")
@@ -513,7 +512,7 @@ class Issue:
                     error_text = CheckErrors(fv_put.status_code, "edit_issue").get_status()
                     WriteErrors(f"Error: {error_text}", f"In def: Set fixVersion/s", f"Version: {version}",
                                 f"IN issue: {issues}").write_to_file()
-                    print(f"{error_text}")
+                    print(f"| {error_text}")
 
 
 def bool_args(input_val) -> bool:
@@ -574,7 +573,10 @@ def main():
         get_issues = team.get_spaces_list()
         for issue in get_issues:
             get_fix_version = Issue(issue, version_prefix, version, jira)
-            get_fix_version.get_issue()
+            story, fv_list = get_fix_version.get_issue()
+            if story:
+                get_issues.append(story)
+            get_fix_version.set_fix_version(fv_list)
 
 
 if __name__ == '__main__':
